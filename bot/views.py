@@ -3,15 +3,15 @@
 
 Реализует:
   - приём POST-запросов от Telegram Bot API;
-  - обработку команд /start, /плов, /plov;
-  - отправку фото плова через строго отфильтрованные источники.
+  - обработку команд /start, «плов», «самса»;
+  - отправку фото блюд через строго отфильтрованные источники.
 """
 
 import json
 import logging
 import os
 import random
-from typing import Optional
+from typing import Optional, Tuple
 import requests
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -22,35 +22,52 @@ TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 TELEGRAM_API_URL = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}'
 
 # ---------------------------------------------------------------------------
-# Ключевые слова для проверки релевантности изображения
+# Параметры блюд
 # ---------------------------------------------------------------------------
-# Названия блюда — обязательно должно присутствовать хотя бы одно
-DISH_NAMES = ('pilaf', 'plov', 'palov', 'polu', 'osh', 'pulao')
-# Дополнительные/региональные — только в комбинации с названием блюда
-RELATED_WORDS = ('kazan', 'uzbek', 'tajik', 'azerbaijan', 'bukhara', 'rice')
-ALL_KEYWORDS = DISH_NAMES + RELATED_WORDS
+
+PLOV_CONFIG = {
+    'query': 'pilaf food',
+    'dish_names': ('pilaf', 'plov', 'palov', 'polu', 'osh', 'pulao'),
+    'related': ('kazan', 'uzbek', 'tajik', 'azerbaijan', 'bukhara', 'rice'),
+    'fallback': 'https://upload.wikimedia.org/wikipedia/commons/e/e3/Plov.jpg',
+}
+
+SOMSA_CONFIG = {
+    'query': 'samsa food',
+    'dish_names': ('samsa', 'somsa', 'samosa', 'samoosa', 'sambusa', 'samuchka'),
+    'related': ('uzbek', 'tajik', 'baked', 'meat'),
+    'fallback': 'https://upload.wikimedia.org/wikipedia/commons/4/45/Samsa_in_Samarkand.jpg',
+}
 
 
-def _is_plov_related(text: str, strict: bool = False) -> bool:
+def _is_dish_related(
+    text: str,
+    dish_names: Tuple[str, ...],
+    all_keywords: Tuple[str, ...],
+    strict: bool = False,
+) -> bool:
     """
-    Проверить, что текст явно относится к плову.
-    strict=True — требует обязательного наличия названия блюда (plov/pilaf).
+    Проверить, что текст явно относится к блюду.
+    strict=True — требует обязательного наличия названия блюда.
     """
     if not text:
         return False
     lowered = text.lower()
     if strict:
-        return any(name in lowered for name in DISH_NAMES)
-    return any(kw in lowered for kw in ALL_KEYWORDS)
+        return any(name in lowered for name in dish_names)
+    return any(kw in lowered for kw in all_keywords)
+
+
+def _clean_wikimedia_url(url: str) -> str:
+    """Обрезать UTM-метки от URL Wikimedia Commons."""
+    if '?' in url:
+        return url.split('?')[0]
+    return url
 
 
 # ---------------------------------------------------------------------------
-# Fallback-картинка (аварийный запас)
+# Отправка сообщений
 # ---------------------------------------------------------------------------
-FALLBACK_IMAGE_URL = (
-    'https://upload.wikimedia.org/wikipedia/commons/e/e3/Plov.jpg'
-)
-
 
 def _send_message(chat_id: int, text: str) -> dict:
     """Отправить текстовое сообщение в Telegram."""
@@ -65,12 +82,10 @@ def _send_message(chat_id: int, text: str) -> dict:
         return {}
 
 
-def _send_photo(chat_id: int, photo_url: str, caption: str = '') -> dict:
+def _send_photo(chat_id: int, photo_url: str) -> dict:
     """Отправить фото в Telegram по URL."""
     url = f'{TELEGRAM_API_URL}/sendPhoto'
     payload = {'chat_id': chat_id, 'photo': photo_url}
-    if caption:
-        payload['caption'] = caption
     try:
         response = requests.post(url, json=payload, timeout=30)
         response.raise_for_status()
@@ -81,32 +96,27 @@ def _send_photo(chat_id: int, photo_url: str, caption: str = '') -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Логика получения картинки плова — жёсткая фильтрация
+# Универсальные поисковые функции
 # ---------------------------------------------------------------------------
 
-def _clean_wikimedia_url(url: str) -> str:
-    """Обрезать UTM-метки от URL Wikimedia Commons."""
-    if '?' in url:
-        return url.split('?')[0]
-    return url
-
-
-def _try_wikimedia() -> Optional[str]:
-    """
-    Основной метод: Wikimedia Commons Search API.
-    Ищет по 'pilaf food', фильтрует результаты по title — только явно про плов.
-    Использует случайный offset для разнообразия.
-    Не требует API-ключа.
-    """
+def _try_wikimedia(
+    query: str,
+    dish_names: Tuple[str, ...],
+    all_keywords: Tuple[str, ...],
+) -> Optional[str]:
+    """Wikimedia Commons Search API со случайным offset и фильтрацией."""
     offset = random.randint(1, 100)
     wiki_api = (
         'https://commons.wikimedia.org/w/api.php'
-        '?action=query&generator=search&gsrsearch=pilaf+food'
+        f'?action=query&generator=search&gsrsearch={requests.utils.quote(query)}'
         '&gsrnamespace=6&prop=imageinfo&iiprop=url|mime'
         f'&format=json&gsrlimit=30&gsroffset={offset}'
     )
     try:
-        resp = requests.get(wiki_api, timeout=15, headers={'User-Agent': 'PlovBot/1.0 (Telegram bot)'})
+        resp = requests.get(
+            wiki_api, timeout=15,
+            headers={'User-Agent': 'PlovBot/1.0 (Telegram bot)'},
+        )
         resp.raise_for_status()
         data = resp.json()
         pages = data.get('query', {}).get('pages', {})
@@ -114,8 +124,7 @@ def _try_wikimedia() -> Optional[str]:
         candidates = []
         for page in pages.values():
             title = page.get('title', '')
-            # Фильтр по названию файла: обязательно должно быть слово plov/pilaf
-            if not _is_plov_related(title, strict=True):
+            if not _is_dish_related(title, dish_names, all_keywords, strict=True):
                 continue
             imageinfo = page.get('imageinfo', [])
             if imageinfo:
@@ -135,11 +144,12 @@ def _try_wikimedia() -> Optional[str]:
     return None
 
 
-def _try_pixabay() -> Optional[str]:
-    """
-    Резерв: Pixabay API.
-    Ищет 'pilaf food', фильтрует по tags — только если есть ключевые слова о плове.
-    """
+def _try_pixabay(
+    query: str,
+    dish_names: Tuple[str, ...],
+    all_keywords: Tuple[str, ...],
+) -> Optional[str]:
+    """Pixabay API со случайной страницей и фильтрацией по tags."""
     api_key = os.environ.get('PIXABAY_API_KEY')
     if not api_key:
         logger.info('PIXABAY_API_KEY не задан — пропускаем Pixabay.')
@@ -148,7 +158,8 @@ def _try_pixabay() -> Optional[str]:
     page = random.randint(1, 10)
     pixabay_url = (
         'https://pixabay.com/api/'
-        f'?key={api_key}&q=pilaf+food&image_type=photo&per_page=50&page={page}'
+        f'?key={api_key}&q={requests.utils.quote(query)}'
+        f'&image_type=photo&per_page=50&page={page}'
     )
     try:
         resp = requests.get(pixabay_url, timeout=15)
@@ -159,8 +170,7 @@ def _try_pixabay() -> Optional[str]:
         candidates = []
         for hit in hits:
             tags = hit.get('tags', '')
-            # Жёсткий фильтр: tags должны явно упоминать плов
-            if not _is_plov_related(tags):
+            if not _is_dish_related(tags, dish_names, all_keywords):
                 continue
             image_url = hit.get('webformatURL')
             if image_url:
@@ -178,18 +188,22 @@ def _try_pixabay() -> Optional[str]:
     return None
 
 
-def _try_pexels() -> Optional[str]:
-    """
-    Второй резерв: Pexels API.
-    Ищет 'pilaf food', фильтрует по alt-тексту — только явно про плов.
-    """
+def _try_pexels(
+    query: str,
+    dish_names: Tuple[str, ...],
+    all_keywords: Tuple[str, ...],
+) -> Optional[str]:
+    """Pexels API со случайной страницей и фильтрацией по alt."""
     api_key = os.environ.get('PEXELS_API_KEY')
     if not api_key:
         logger.info('PEXELS_API_KEY не задан — пропускаем Pexels.')
         return None
 
     page = random.randint(1, 5)
-    pexels_url = f'https://api.pexels.com/v1/search?query=pilaf+food&per_page=80&page={page}'
+    pexels_url = (
+        f'https://api.pexels.com/v1/search'
+        f'?query={requests.utils.quote(query)}&per_page=80&page={page}'
+    )
     headers = {'Authorization': api_key}
     try:
         resp = requests.get(pexels_url, headers=headers, timeout=15)
@@ -200,8 +214,7 @@ def _try_pexels() -> Optional[str]:
         candidates = []
         for photo in photos:
             alt = photo.get('alt', '')
-            # Жёсткий фильтр: alt должен явно упоминать плов
-            if not _is_plov_related(alt):
+            if not _is_dish_related(alt, dish_names, all_keywords):
                 continue
             src = photo.get('src', {})
             image_url = src.get('original') or src.get('large2x')
@@ -220,28 +233,39 @@ def _try_pexels() -> Optional[str]:
     return None
 
 
+def get_random_dish_image(config: dict) -> str:
+    """
+    Универсальная функция получения URL картинки блюда.
+    config должен содержать: query, dish_names, related, fallback.
+    """
+    dish_names = config['dish_names']
+    all_keywords = dish_names + config['related']
+    query = config['query']
+
+    url = _try_wikimedia(query, dish_names, all_keywords)
+    if url:
+        return url
+
+    url = _try_pixabay(query, dish_names, all_keywords)
+    if url:
+        return url
+
+    url = _try_pexels(query, dish_names, all_keywords)
+    if url:
+        return url
+
+    logger.warning('Все API не дали результат. Используем fallback для %s.', query)
+    return config['fallback']
+
+
 def get_random_plov_image() -> str:
-    """
-    Последовательно пытаемся получить URL картинки плова:
-      1. Wikimedia Commons (строгая фильтрация по title)
-      2. Pixabay (фильтрация по tags)
-      3. Pexels (фильтрация по alt)
-      4. Статический fallback URL
-    """
-    url = _try_wikimedia()
-    if url:
-        return url
+    """Получить случайное фото плова."""
+    return get_random_dish_image(PLOV_CONFIG)
 
-    url = _try_pixabay()
-    if url:
-        return url
 
-    url = _try_pexels()
-    if url:
-        return url
-
-    logger.warning('Все API не дали плов. Используем статический fallback.')
-    return FALLBACK_IMAGE_URL
+def get_random_somsa_image() -> str:
+    """Получить случайное фото самсы."""
+    return get_random_dish_image(SOMSA_CONFIG)
 
 
 # ---------------------------------------------------------------------------
@@ -278,16 +302,22 @@ def webhook(request):
     # --- /start --------------------------------------------------------------
     if text in ('/start',):
         welcome = (
-            'Привет! Я бот, который знает толк в плове.\n\n'
-            'Просто напиши слово «плов» (в любом регистре), '
-            'и я пришлю случайное фото этого божественного блюда! 🍚'
+            'Привет! Я бот, который знает толк в еде.\n\n'
+            'Напиши «плов» — пришлю фото плова.\n'
+            'Напиши «самса» — пришлю фото самсы. 🍽️'
         )
         _send_message(chat_id, welcome)
         return JsonResponse({'ok': True})
 
-    # --- плов (любой регистр) ------------------------------------------------
+    # --- плов ----------------------------------------------------------------
     if text == 'плов':
         image_url = get_random_plov_image()
+        _send_photo(chat_id, image_url)
+        return JsonResponse({'ok': True})
+
+    # --- самса ---------------------------------------------------------------
+    if text in ('самса', 'somsa', 'сомса'):
+        image_url = get_random_somsa_image()
         _send_photo(chat_id, image_url)
         return JsonResponse({'ok': True})
 
