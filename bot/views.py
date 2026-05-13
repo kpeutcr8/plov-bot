@@ -7,6 +7,7 @@
   - отправку фото блюд через строго отфильтрованные источники.
 """
 
+import concurrent.futures
 import json
 import logging
 import os
