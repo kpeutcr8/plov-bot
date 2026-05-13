@@ -67,7 +67,7 @@ def _try_unsplash() -> Optional[str]:
     Попытка получить случайное фото плова через Unsplash Source API.
     Сервис не требует API-ключа, но может вернуть 404 или редирект.
     """
-    unsplash_url = 'https://source.unsplash.com/random/?plov'
+    unsplash_url = 'https://source.unsplash.com/random/?pilaf,food,rice,dish'
     try:
         # allow_redirects=True — следуем за редиректом к финальной картинке
         resp = requests.get(unsplash_url, allow_redirects=True, timeout=15)
@@ -94,7 +94,7 @@ def _try_pixabay() -> Optional[str]:
 
     pixabay_url = (
         'https://pixabay.com/api/'
-        f'?key={api_key}&q=plov&image_type=photo&per_page=50'
+        f'?key={api_key}&q=pilaf+food&image_type=photo&per_page=50'
     )
     try:
         resp = requests.get(pixabay_url, timeout=15)
@@ -124,7 +124,7 @@ def _try_pexels() -> Optional[str]:
         logger.info('PEXELS_API_KEY не задан — пропускаем Pexels.')
         return None
 
-    pexels_url = 'https://api.pexels.com/v1/search?query=plov&per_page=30'
+    pexels_url = 'https://api.pexels.com/v1/search?query=pilaf+food&per_page=30'
     headers = {'Authorization': api_key}
     try:
         resp = requests.get(pexels_url, headers=headers, timeout=15)
