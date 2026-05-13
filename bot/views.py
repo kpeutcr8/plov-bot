@@ -36,10 +36,15 @@ PLOV_CONFIG = {
 
 SOMSA_CONFIG = {
     'query': 'samsa',
-    'wiki_query': 'samsa food',
+    'wiki_query': 'samsa pastry',
     'dish_names': ('samsa', 'somsa', 'samosa', 'samoosa', 'sambusa', 'samuchka'),
     'related': ('uzbek', 'tajik'),
-    'exclude': ('man', 'woman', 'person', 'people', 'microphone', 'concert', 'portrait', 'singer', 'artist', 'traum', 'festival', 'band'),
+    'exclude': (
+        'man', 'woman', 'person', 'people', 'microphone', 'concert', 'portrait',
+        'singer', 'artist', 'traum', 'festival', 'band', 'echelon', 'gregor',
+        'kafka', 'book', 'novel', 'john', 'giovanni', 'dpla', 'amphi',
+        'museum', 'archive', 'stage', 'performance', 'metamorphosis',
+    ),
     'fallback': 'https://upload.wikimedia.org/wikipedia/commons/f/f1/Uzbek_samsa.jpg',
 }
 
