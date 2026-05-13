@@ -27,15 +27,18 @@ TELEGRAM_API_URL = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}'
 
 PLOV_CONFIG = {
     'query': 'pilaf food',
+    'wiki_query': 'pilaf food',
     'dish_names': ('pilaf', 'plov', 'palov', 'polu', 'osh', 'pulao'),
     'related': ('kazan', 'uzbek', 'tajik', 'azerbaijan', 'bukhara', 'rice'),
     'fallback': 'https://upload.wikimedia.org/wikipedia/commons/e/e3/Plov.jpg',
 }
 
 SOMSA_CONFIG = {
-    'query': 'samsa food',
+    'query': 'samsa',
+    'wiki_query': 'samsa food',
     'dish_names': ('samsa', 'somsa', 'samosa', 'samoosa', 'sambusa', 'samuchka'),
-    'related': ('uzbek', 'tajik', 'baked', 'meat'),
+    'related': ('uzbek', 'tajik'),
+    'exclude': ('man', 'woman', 'person', 'people', 'microphone', 'concert', 'portrait', 'singer', 'artist', 'traum', 'festival', 'band'),
     'fallback': 'https://upload.wikimedia.org/wikipedia/commons/f/f1/Uzbek_samsa.jpg',
 }
 
@@ -44,15 +47,19 @@ def _is_dish_related(
     text: str,
     dish_names: Tuple[str, ...],
     all_keywords: Tuple[str, ...],
+    exclude: Tuple[str, ...] = (),
     strict: bool = False,
 ) -> bool:
     """
     Проверить, что текст явно относится к блюду.
     strict=True — требует обязательного наличия названия блюда.
+    exclude — слова, которые точно не должны встречаться (люди, концерты и т.д.).
     """
     if not text:
         return False
     lowered = text.lower()
+    if exclude and any(exc in lowered for exc in exclude):
+        return False
     if strict:
         return any(name in lowered for name in dish_names)
     return any(kw in lowered for kw in all_keywords)
@@ -103,6 +110,7 @@ def _try_wikimedia(
     query: str,
     dish_names: Tuple[str, ...],
     all_keywords: Tuple[str, ...],
+    exclude: Tuple[str, ...] = (),
 ) -> Optional[str]:
     """Wikimedia Commons Search API со случайным offset и фильтрацией."""
     offset = random.randint(1, 100)
@@ -124,7 +132,7 @@ def _try_wikimedia(
         candidates = []
         for page in pages.values():
             title = page.get('title', '')
-            if not _is_dish_related(title, dish_names, all_keywords, strict=True):
+            if not _is_dish_related(title, dish_names, all_keywords, exclude=exclude, strict=True):
                 continue
             imageinfo = page.get('imageinfo', [])
             if imageinfo:
@@ -148,29 +156,46 @@ def _try_pixabay(
     query: str,
     dish_names: Tuple[str, ...],
     all_keywords: Tuple[str, ...],
+    exclude: Tuple[str, ...] = (),
 ) -> Optional[str]:
-    """Pixabay API со случайной страницей и фильтрацией по tags."""
+    """Pixabay API с динамической пагинацией и строгой фильтрацией по tags."""
     api_key = os.environ.get('PIXABAY_API_KEY')
     if not api_key:
         logger.info('PIXABAY_API_KEY не задан — пропускаем Pixabay.')
         return None
 
-    page = random.randint(1, 10)
-    pixabay_url = (
+    base_url = (
         'https://pixabay.com/api/'
         f'?key={api_key}&q={requests.utils.quote(query)}'
-        f'&image_type=photo&per_page=50&page={page}'
+        '&image_type=photo&per_page=50'
     )
     try:
-        resp = requests.get(pixabay_url, timeout=5)
-        resp.raise_for_status()
-        data = resp.json()
-        hits = data.get('hits', [])
+        # Сначала узнаем сколько всего результатов, чтобы не лезть на пустые страницы
+        resp_first = requests.get(f'{base_url}&page=1', timeout=5)
+        resp_first.raise_for_status()
+        data_first = resp_first.json()
+        total_hits = data_first.get('totalHits', 0)
+        if total_hits == 0:
+            logger.warning('Pixabay: 0 результатов по запросу "%s"', query)
+            return None
 
+        max_page = min(10, (total_hits + 49) // 50)
+        page = random.randint(1, max_page)
+
+        # Если случайная страница != 1, делаем второй запрос
+        if page == 1:
+            data = data_first
+        else:
+            resp = requests.get(f'{base_url}&page={page}', timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+
+        hits = data.get('hits', [])
         candidates = []
         for hit in hits:
             tags = hit.get('tags', '')
-            if not _is_dish_related(tags, dish_names, all_keywords):
+            # Строгая фильтрация: tags должны явно содержать название блюда
+            if not _is_dish_related(tags, dish_names, all_keywords, exclude=exclude, strict=True):
                 continue
             image_url = hit.get('webformatURL')
             if image_url:
@@ -192,8 +217,9 @@ def _try_pexels(
     query: str,
     dish_names: Tuple[str, ...],
     all_keywords: Tuple[str, ...],
+    exclude: Tuple[str, ...] = (),
 ) -> Optional[str]:
-    """Pexels API со случайной страницей и фильтрацией по alt."""
+    """Pexels API со случайной страницей и строгой фильтрацией по alt."""
     api_key = os.environ.get('PEXELS_API_KEY')
     if not api_key:
         logger.info('PEXELS_API_KEY не задан — пропускаем Pexels.')
@@ -214,7 +240,8 @@ def _try_pexels(
         candidates = []
         for photo in photos:
             alt = photo.get('alt', '')
-            if not _is_dish_related(alt, dish_names, all_keywords):
+            # Строгая фильтрация: alt должен явно содержать название блюда
+            if not _is_dish_related(alt, dish_names, all_keywords, exclude=exclude, strict=True):
                 continue
             src = photo.get('src', {})
             image_url = src.get('original') or src.get('large2x')
@@ -237,20 +264,24 @@ def get_random_dish_image(config: dict) -> str:
     """
     Универсальная функция получения URL картинки блюда.
     config должен содержать: query, dish_names, related, fallback.
+    Опционально: exclude.
     """
     dish_names = config['dish_names']
     all_keywords = dish_names + config['related']
+    exclude = config.get('exclude', ())
     query = config['query']
 
-    url = _try_wikimedia(query, dish_names, all_keywords)
+    wiki_query = config.get('wiki_query', query)
+
+    url = _try_wikimedia(wiki_query, dish_names, all_keywords, exclude)
     if url:
         return url
 
-    url = _try_pixabay(query, dish_names, all_keywords)
+    url = _try_pixabay(query, dish_names, all_keywords, exclude)
     if url:
         return url
 
-    url = _try_pexels(query, dish_names, all_keywords)
+    url = _try_pexels(query, dish_names, all_keywords, exclude)
     if url:
         return url
 
