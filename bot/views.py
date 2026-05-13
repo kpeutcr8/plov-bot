@@ -194,6 +194,11 @@ def webhook(request):
     chat_id = chat.get('id')
     text = (message.get('text') or '').strip().lower()
 
+    # В группах Telegram добавляет @username бота к команде.
+    # Убираем всё после @, чтобы /плов@botname стал просто /плов.
+    if '@' in text:
+        text = text.split('@')[0]
+
     if not chat_id:
         return JsonResponse({'ok': False, 'error': 'No chat_id'}, status=400)
 
