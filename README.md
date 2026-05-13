@@ -33,7 +33,7 @@ cd plov
 uv sync
 
 # 3. Установите переменные окружения
-export TELEGRAM_TOKEN=8560460156:AAF_L2VcN70Nomy2BgrzTxbVkPDQ5AK5gNU
+export TELEGRAM_TOKEN=your_telegram_token_here
 export DJANGO_SECRET_KEY=any-local-secret-key
 
 # 4. Запустите сервер
@@ -54,7 +54,7 @@ python manage.py setwebhook https://abc123.ngrok.io/webhook/
 
 У вас уже есть токен бота от BotFather:
 ```
-TELEGRAM_TOKEN=8560460156:AAF_L2VcN70Nomy2BgrzTxbVkPDQ5AK5gNU
+TELEGRAM_TOKEN=your_telegram_token_here
 ```
 
 ### 2. (Опционально) Получить API-ключи
@@ -82,7 +82,7 @@ TELEGRAM_TOKEN=8560460156:AAF_L2VcN70Nomy2BgrzTxbVkPDQ5AK5gNU
    - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `gunicorn plov.wsgi:application`
 5. Нажмите **Advanced** и добавьте переменные окружения:
-   - `TELEGRAM_TOKEN` = `8560460156:AAF_L2VcN70Nomy2BgrzTxbVkPDQ5AK5gNU`
+   - `TELEGRAM_TOKEN` = `your_telegram_token_here`
    - `PIXABAY_API_KEY` (опционально)
    - `PEXELS_API_KEY` (опционально)
 6. Нажмите **Create Web Service**
@@ -108,7 +108,7 @@ python manage.py setwebhook https://ваш-сервис.onrender.com/webhook/
 
 Или удалённо через curl:
 ```bash
-curl -X POST "https://api.telegram.org/bot8560460156:AAF_L2VcN70Nomy2BgrzTxbVkPDQ5AK5gNU/setWebhook" \
+curl -X POST "https://api.telegram.org/botyour_telegram_token_here/setWebhook" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://ваш-сервис.onrender.com/webhook/"}'
 ```
