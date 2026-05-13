@@ -4,7 +4,7 @@
 Реализует:
   - приём POST-запросов от Telegram Bot API;
   - обработку команд /start, /плов, /plov;
-  - отправку фото плова через несколько внешних API с fallback-цепочкой.
+  - отправку фото плова через строго отфильтрованные источники.
 """
 
 import json
@@ -22,8 +22,30 @@ TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 TELEGRAM_API_URL = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}'
 
 # ---------------------------------------------------------------------------
-# Fallback-картинка (аварийный запас).  Ссылка ведёт на публичное изображение
-# плова, размещённое на imgur — хостинг с высокой доступностью.
+# Ключевые слова для проверки релевантности изображения
+# ---------------------------------------------------------------------------
+# Названия блюда — обязательно должно присутствовать хотя бы одно
+DISH_NAMES = ('pilaf', 'plov', 'palov', 'polu', 'osh', 'pulao')
+# Дополнительные/региональные — только в комбинации с названием блюда
+RELATED_WORDS = ('kazan', 'uzbek', 'tajik', 'azerbaijan', 'bukhara', 'rice')
+ALL_KEYWORDS = DISH_NAMES + RELATED_WORDS
+
+
+def _is_plov_related(text: str, strict: bool = False) -> bool:
+    """
+    Проверить, что текст явно относится к плову.
+    strict=True — требует обязательного наличия названия блюда (plov/pilaf).
+    """
+    if not text:
+        return False
+    lowered = text.lower()
+    if strict:
+        return any(name in lowered for name in DISH_NAMES)
+    return any(kw in lowered for kw in ALL_KEYWORDS)
+
+
+# ---------------------------------------------------------------------------
+# Fallback-картинка (аварийный запас)
 # ---------------------------------------------------------------------------
 FALLBACK_IMAGE_URL = (
     'https://upload.wikimedia.org/wikipedia/commons/e/e3/Plov.jpg'
@@ -59,33 +81,62 @@ def _send_photo(chat_id: int, photo_url: str, caption: str = '') -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Логика получения картинки плова — цепочка fallback'ов
+# Логика получения картинки плова — жёсткая фильтрация
 # ---------------------------------------------------------------------------
 
-def _try_unsplash() -> Optional[str]:
+def _clean_wikimedia_url(url: str) -> str:
+    """Обрезать UTM-метки от URL Wikimedia Commons."""
+    if '?' in url:
+        return url.split('?')[0]
+    return url
+
+
+def _try_wikimedia() -> Optional[str]:
     """
-    Попытка получить случайное фото плова через Unsplash Source API.
-    Сервис не требует API-ключа, но может вернуть 404 или редирект.
+    Основной метод: Wikimedia Commons Search API.
+    Ищет по 'plov food', фильтрует результаты по title — только явно про плов.
+    Не требует API-ключа.
     """
-    unsplash_url = 'https://source.unsplash.com/random/?pilaf,food,rice,dish'
+    wiki_api = (
+        'https://commons.wikimedia.org/w/api.php'
+        '?action=query&generator=search&gsrsearch=plov+food'
+        '&gsrnamespace=6&prop=imageinfo&iiprop=url|mime'
+        '&format=json&gsrlimit=30'
+    )
     try:
-        # allow_redirects=True — следуем за редиректом к финальной картинке
-        resp = requests.get(unsplash_url, allow_redirects=True, timeout=15)
-        if resp.status_code == 200:
-            final_url = resp.url
-            logger.info('Unsplash вернул URL: %s', final_url)
-            return final_url
-        else:
-            logger.warning('Unsplash вернул статус %s', resp.status_code)
+        resp = requests.get(wiki_api, timeout=15, headers={'User-Agent': 'PlovBot/1.0 (Telegram bot)'})
+        resp.raise_for_status()
+        data = resp.json()
+        pages = data.get('query', {}).get('pages', {})
+
+        candidates = []
+        for page in pages.values():
+            title = page.get('title', '')
+            # Фильтр по названию файла: обязательно должно быть слово plov/pilaf
+            if not _is_plov_related(title, strict=True):
+                continue
+            imageinfo = page.get('imageinfo', [])
+            if imageinfo:
+                img_url = imageinfo[0].get('url', '')
+                if img_url:
+                    candidates.append(_clean_wikimedia_url(img_url))
+
+        if candidates:
+            chosen = random.choice(candidates)
+            logger.info('Wikimedia выбрал URL: %s', chosen)
+            return chosen
+        logger.warning('Wikimedia не нашёл подходящих изображений после фильтрации.')
     except requests.RequestException as exc:
-        logger.warning('Unsplash недоступен: %s', exc)
+        logger.warning('Wikimedia недоступен: %s', exc)
+    except (KeyError, ValueError) as exc:
+        logger.warning('Некорректный ответ Wikimedia: %s', exc)
     return None
 
 
 def _try_pixabay() -> Optional[str]:
     """
-    Попытка получить фото через Pixabay API.
-    Требуется переменная окружения PIXABAY_API_KEY.
+    Резерв: Pixabay API.
+    Ищет 'pilaf food', фильтрует по tags — только если есть ключевые слова о плове.
     """
     api_key = os.environ.get('PIXABAY_API_KEY')
     if not api_key:
@@ -101,12 +152,22 @@ def _try_pixabay() -> Optional[str]:
         resp.raise_for_status()
         data = resp.json()
         hits = data.get('hits', [])
-        if hits:
-            image_url = random.choice(hits).get('webformatURL')
+
+        candidates = []
+        for hit in hits:
+            tags = hit.get('tags', '')
+            # Жёсткий фильтр: tags должны явно упоминать плов
+            if not _is_plov_related(tags):
+                continue
+            image_url = hit.get('webformatURL')
             if image_url:
-                logger.info('Pixabay вернул URL: %s', image_url)
-                return image_url
-        logger.warning('Pixabay вернул пустой список результатов.')
+                candidates.append(image_url)
+
+        if candidates:
+            chosen = random.choice(candidates)
+            logger.info('Pixabay выбрал URL: %s', chosen)
+            return chosen
+        logger.warning('Pixabay не нашёл подходящих изображений после фильтрации.')
     except requests.RequestException as exc:
         logger.warning('Pixabay недоступен: %s', exc)
     except (KeyError, ValueError) as exc:
@@ -116,8 +177,8 @@ def _try_pixabay() -> Optional[str]:
 
 def _try_pexels() -> Optional[str]:
     """
-    Попытка получить фото через Pexels API.
-    Требуется переменная окружения PEXELS_API_KEY.
+    Второй резерв: Pexels API.
+    Ищет 'pilaf food', фильтрует по alt-тексту — только явно про плов.
     """
     api_key = os.environ.get('PEXELS_API_KEY')
     if not api_key:
@@ -131,15 +192,23 @@ def _try_pexels() -> Optional[str]:
         resp.raise_for_status()
         data = resp.json()
         photos = data.get('photos', [])
-        if photos:
-            photo = random.choice(photos)
-            # Предпочитаем оригинал, если нет — берём large2x
+
+        candidates = []
+        for photo in photos:
+            alt = photo.get('alt', '')
+            # Жёсткий фильтр: alt должен явно упоминать плов
+            if not _is_plov_related(alt):
+                continue
             src = photo.get('src', {})
             image_url = src.get('original') or src.get('large2x')
             if image_url:
-                logger.info('Pexels вернул URL: %s', image_url)
-                return image_url
-        logger.warning('Pexels вернул пустой список результатов.')
+                candidates.append(image_url)
+
+        if candidates:
+            chosen = random.choice(candidates)
+            logger.info('Pexels выбрал URL: %s', chosen)
+            return chosen
+        logger.warning('Pexels не нашёл подходящих изображений после фильтрации.')
     except requests.RequestException as exc:
         logger.warning('Pexels недоступен: %s', exc)
     except (KeyError, ValueError) as exc:
@@ -150,12 +219,12 @@ def _try_pexels() -> Optional[str]:
 def get_random_plov_image() -> str:
     """
     Последовательно пытаемся получить URL картинки плова:
-      1. Unsplash Source (без ключа)
-      2. Pixabay (если задан PIXABAY_API_KEY)
-      3. Pexels (если задан PEXELS_API_KEY)
+      1. Wikimedia Commons (строгая фильтрация по title)
+      2. Pixabay (фильтрация по tags)
+      3. Pexels (фильтрация по alt)
       4. Статический fallback URL
     """
-    url = _try_unsplash()
+    url = _try_wikimedia()
     if url:
         return url
 
@@ -167,7 +236,7 @@ def get_random_plov_image() -> str:
     if url:
         return url
 
-    logger.warning('Все API недоступны. Используем статический fallback.')
+    logger.warning('Все API не дали плов. Используем статический fallback.')
     return FALLBACK_IMAGE_URL
 
 
@@ -218,7 +287,7 @@ def webhook(request):
         _send_photo(
             chat_id,
             image_url,
-            caption='Вот ваш порция плова! Приятного аппетита! 🍛'
+            caption='Вот ваша порция плова! Приятного аппетита! 🍛'
         )
         return JsonResponse({'ok': True})
 
