@@ -94,14 +94,16 @@ def _clean_wikimedia_url(url: str) -> str:
 def _try_wikimedia() -> Optional[str]:
     """
     Основной метод: Wikimedia Commons Search API.
-    Ищет по 'plov food', фильтрует результаты по title — только явно про плов.
+    Ищет по 'pilaf food', фильтрует результаты по title — только явно про плов.
+    Использует случайный offset для разнообразия.
     Не требует API-ключа.
     """
+    offset = random.randint(1, 100)
     wiki_api = (
         'https://commons.wikimedia.org/w/api.php'
-        '?action=query&generator=search&gsrsearch=plov+food'
+        '?action=query&generator=search&gsrsearch=pilaf+food'
         '&gsrnamespace=6&prop=imageinfo&iiprop=url|mime'
-        '&format=json&gsrlimit=30'
+        f'&format=json&gsrlimit=30&gsroffset={offset}'
     )
     try:
         resp = requests.get(wiki_api, timeout=15, headers={'User-Agent': 'PlovBot/1.0 (Telegram bot)'})
@@ -143,9 +145,10 @@ def _try_pixabay() -> Optional[str]:
         logger.info('PIXABAY_API_KEY не задан — пропускаем Pixabay.')
         return None
 
+    page = random.randint(1, 10)
     pixabay_url = (
         'https://pixabay.com/api/'
-        f'?key={api_key}&q=pilaf+food&image_type=photo&per_page=50'
+        f'?key={api_key}&q=pilaf+food&image_type=photo&per_page=50&page={page}'
     )
     try:
         resp = requests.get(pixabay_url, timeout=15)
@@ -185,7 +188,8 @@ def _try_pexels() -> Optional[str]:
         logger.info('PEXELS_API_KEY не задан — пропускаем Pexels.')
         return None
 
-    pexels_url = 'https://api.pexels.com/v1/search?query=pilaf+food&per_page=30'
+    page = random.randint(1, 5)
+    pexels_url = f'https://api.pexels.com/v1/search?query=pilaf+food&per_page=80&page={page}'
     headers = {'Authorization': api_key}
     try:
         resp = requests.get(pexels_url, headers=headers, timeout=15)

@@ -45,3 +45,4 @@ Thumbs.db
 
 # Render / deployment
 .env
+.render_deploy_hook

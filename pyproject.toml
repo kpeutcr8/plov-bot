@@ -7,4 +7,5 @@ dependencies = [
     "django>=4.2.30",
     "requests>=2.31.0",
     "gunicorn>=21.0.0",
+    "duckduckgo-search>=8.1.1",
 ]
