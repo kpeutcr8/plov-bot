@@ -36,7 +36,7 @@ SOMSA_CONFIG = {
     'query': 'samsa food',
     'dish_names': ('samsa', 'somsa', 'samosa', 'samoosa', 'sambusa', 'samuchka'),
     'related': ('uzbek', 'tajik', 'baked', 'meat'),
-    'fallback': 'https://upload.wikimedia.org/wikipedia/commons/4/45/Samsa_in_Samarkand.jpg',
+    'fallback': 'https://upload.wikimedia.org/wikipedia/commons/f/f1/Uzbek_samsa.jpg',
 }
 
 
@@ -114,7 +114,7 @@ def _try_wikimedia(
     )
     try:
         resp = requests.get(
-            wiki_api, timeout=15,
+            wiki_api, timeout=5,
             headers={'User-Agent': 'PlovBot/1.0 (Telegram bot)'},
         )
         resp.raise_for_status()
@@ -162,7 +162,7 @@ def _try_pixabay(
         f'&image_type=photo&per_page=50&page={page}'
     )
     try:
-        resp = requests.get(pixabay_url, timeout=15)
+        resp = requests.get(pixabay_url, timeout=5)
         resp.raise_for_status()
         data = resp.json()
         hits = data.get('hits', [])
@@ -206,7 +206,7 @@ def _try_pexels(
     )
     headers = {'Authorization': api_key}
     try:
-        resp = requests.get(pexels_url, headers=headers, timeout=15)
+        resp = requests.get(pexels_url, headers=headers, timeout=5)
         resp.raise_for_status()
         data = resp.json()
         photos = data.get('photos', [])
