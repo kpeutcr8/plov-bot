@@ -80,19 +80,36 @@ def _clean_wikimedia_url(url: str) -> str:
 
 def _is_valid_image_url(url: str) -> bool:
     """Проверить, что URL отдаёт изображение по Content-Type."""
+    headers = {
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/120.0.0.0 Safari/537.36'
+        )
+    }
     try:
-        resp = requests.head(url, timeout=5, allow_redirects=True)
+        resp = requests.head(url, timeout=5, allow_redirects=True, headers=headers)
         if resp.status_code == 200:
             content_type = resp.headers.get('Content-Type', '')
+            content_length = resp.headers.get('Content-Length')
+            if content_type == 'image/svg+xml':
+                return False
+            if content_length is not None and int(content_length) <= 0:
+                return False
             return content_type.startswith('image/')
     except requests.RequestException:
         pass
 
     # Если HEAD не сработал (405 и т.д.), пробуем GET с stream=True
     try:
-        resp = requests.get(url, stream=True, timeout=5)
+        resp = requests.get(url, stream=True, timeout=5, headers=headers)
         content_type = resp.headers.get('Content-Type', '')
+        content_length = resp.headers.get('Content-Length')
         resp.close()
+        if content_type == 'image/svg+xml':
+            return False
+        if content_length is not None and int(content_length) <= 0:
+            return False
         return content_type.startswith('image/')
     except requests.RequestException:
         return False
@@ -123,6 +140,12 @@ def _send_photo(chat_id: int, photo_url: str) -> dict:
         response = requests.post(url, json=payload, timeout=30)
         response.raise_for_status()
         return response.json()
+    except requests.HTTPError as exc:
+        resp_text = ''
+        if exc.response is not None:
+            resp_text = exc.response.text
+        logger.error('Ошибка при отправке фото: %s — response: %s', exc, resp_text)
+        return {}
     except requests.RequestException as exc:
         logger.error('Ошибка при отправке фото: %s', exc)
         return {}
@@ -220,8 +243,8 @@ def _try_pixabay(
         candidates = []
         for hit in hits:
             tags = hit.get('tags', '')
-            # Строгая фильтрация: tags должны явно содержать название блюда
-            if not _is_dish_related(tags, dish_names, all_keywords, exclude=exclude, strict=True):
+            # Доверяем поисковому запросу Pixabay, фильтруем только по exclude
+            if exclude and any(exc in tags.lower() for exc in exclude):
                 continue
             image_url = hit.get('webformatURL')
             if image_url:
@@ -266,8 +289,8 @@ def _try_pexels(
         candidates = []
         for photo in photos:
             alt = photo.get('alt', '')
-            # Строгая фильтрация: alt должен явно содержать название блюда
-            if not _is_dish_related(alt, dish_names, all_keywords, exclude=exclude, strict=True):
+            # Доверяем поисковому запросу Pexels, фильтруем только по exclude
+            if exclude and any(exc in alt.lower() for exc in exclude):
                 continue
             src = photo.get('src', {})
             image_url = src.get('original') or src.get('large2x')
@@ -286,12 +309,20 @@ def _try_pexels(
     return None
 
 
+def _try_source(func, *args):
+    """Вспомогательная обёртка: получить URL и сразу провалидировать."""
+    url = func(*args)
+    if url and _is_valid_image_url(url):
+        return url
+    return None
+
+
 def get_random_dish_image(config: dict, max_attempts: int = 3) -> str:
     """
     Универсальная функция получения URL картинки блюда.
     config должен содержать: query, dish_names, related, fallback.
     Опционально: exclude.
-    Делает до max_attempts попыток через разные API.
+    Делает до max_attempts параллельных попыток через разные API.
     """
     dish_names = config['dish_names']
     all_keywords = dish_names + config['related']
@@ -301,20 +332,30 @@ def get_random_dish_image(config: dict, max_attempts: int = 3) -> str:
     wiki_query = config.get('wiki_query', query)
 
     for attempt in range(1, max_attempts + 1):
-        url = _try_wikimedia(wiki_query, dish_names, all_keywords, exclude)
-        if url and _is_valid_image_url(url):
-            logger.info('Валидная картинка найдена Wikimedia (попытка %d): %s', attempt, url)
-            return url
-
-        url = _try_pixabay(query, dish_names, all_keywords, exclude)
-        if url and _is_valid_image_url(url):
-            logger.info('Валидная картинка найдена Pixabay (попытка %d): %s', attempt, url)
-            return url
-
-        url = _try_pexels(query, dish_names, all_keywords, exclude)
-        if url and _is_valid_image_url(url):
-            logger.info('Валидная картинка найдена Pexels (попытка %d): %s', attempt, url)
-            return url
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(
+                    _try_source, _try_wikimedia, wiki_query, dish_names, all_keywords, exclude
+                ): 'Wikimedia',
+                executor.submit(
+                    _try_source, _try_pixabay, query, dish_names, all_keywords, exclude
+                ): 'Pixabay',
+                executor.submit(
+                    _try_source, _try_pexels, query, dish_names, all_keywords, exclude
+                ): 'Pexels',
+            }
+            for future in concurrent.futures.as_completed(futures):
+                source_name = futures[future]
+                try:
+                    url = future.result()
+                    if url:
+                        logger.info(
+                            'Валидная картинка найдена %s (попытка %d): %s',
+                            source_name, attempt, url,
+                        )
+                        return url
+                except Exception as exc:
+                    logger.warning('Ошибка при запросе к %s: %s', source_name, exc)
 
         logger.info('Попытка %d не дала валидной картинки, пробуем ещё...', attempt)
 
@@ -376,13 +417,17 @@ def webhook(request):
     # --- плов ----------------------------------------------------------------
     if text == 'плов':
         image_url = get_random_plov_image()
-        _send_photo(chat_id, image_url)
+        result = _send_photo(chat_id, image_url)
+        if not result or not result.get('ok'):
+            _send_message(chat_id, 'Не удалось загрузить фото, попробуй ещё раз 🍽️')
         return JsonResponse({'ok': True})
 
     # --- самса ---------------------------------------------------------------
     if text in ('самса', 'somsa', 'сомса'):
         image_url = get_random_somsa_image()
-        _send_photo(chat_id, image_url)
+        result = _send_photo(chat_id, image_url)
+        if not result or not result.get('ok'):
+            _send_message(chat_id, 'Не удалось загрузить фото, попробуй ещё раз 🍽️')
         return JsonResponse({'ok': True})
 
     # --- всё остальное — молчим, чтобы не засорять чат -----------------------
