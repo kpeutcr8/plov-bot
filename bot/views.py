@@ -324,7 +324,11 @@ def _try_duckduckgo_images(
         from duckduckgo_search import DDGS
 
         with DDGS() as ddgs:
-            results = ddgs.images(query, max_results=30)
+            results = ddgs.images(
+                query,
+                max_results=100,
+                region=random.choice(("wt-wt", "us-en", "ru-ru", "en-gb", "de-de", "fr-fr")),
+            )
 
         candidates = []
         for result in results:
@@ -369,7 +373,9 @@ def get_random_dish_image(config: dict, max_attempts: int = 3) -> str:
     wiki_query = config.get('wiki_query', query)
 
     for attempt in range(1, max_attempts + 1):
-        url = _try_source(_try_duckduckgo_images, query, dish_names, all_keywords, exclude)
+        extras = ('recipe', 'cooking', 'delicious', 'food', 'traditional', 'homemade')
+        ddg_query = f"{query} {random.choice(extras)}"
+        url = _try_source(_try_duckduckgo_images, ddg_query, dish_names, all_keywords, exclude)
         if url:
             logger.info('Валидная картинка найдена DuckDuckGo (попытка %d): %s', attempt, url)
             return url
@@ -421,7 +427,9 @@ def get_cobalt_image() -> str:
     query = 'Chevrolet Cobalt white'
     dish_names = ('cobalt', 'chevrolet', 'chevy')
     all_keywords = dish_names + ('car', 'auto', 'sedan', 'white')
-    url = _try_duckduckgo_images(query, dish_names, all_keywords, (), strict=False)
+    extras = ('car', 'sedan', 'auto', 'vehicle', 'road', 'drive')
+    ddg_query = f"{query} {random.choice(extras)}"
+    url = _try_duckduckgo_images(ddg_query, dish_names, all_keywords, (), strict=False)
     if url:
         return url
     logger.warning('DuckDuckGo не дал результат для кобальта. Используем fallback.')
