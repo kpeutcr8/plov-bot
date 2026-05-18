@@ -181,7 +181,7 @@ def _try_wikimedia(
         candidates = []
         for page in pages.values():
             title = page.get('title', '')
-            if not _is_dish_related(title, dish_names, all_keywords, exclude=exclude, strict=True):
+            if not _is_dish_related(title, dish_names, all_keywords, exclude=exclude, strict=strict):
                 continue
             imageinfo = page.get('imageinfo', [])
             if imageinfo:
@@ -314,6 +314,7 @@ def _try_duckduckgo_images(
     dish_names: Tuple[str, ...],
     all_keywords: Tuple[str, ...],
     exclude: Tuple[str, ...] = (),
+    strict: bool = True,
 ) -> Optional[str]:
     """
     Поиск картинок через DuckDuckGo (библиотека duckduckgo-search).
@@ -415,6 +416,18 @@ def get_random_somsa_image() -> str:
     return get_random_dish_image(SOMSA_CONFIG)
 
 
+def get_cobalt_image() -> str:
+    """Получить случайное фото Chevrolet Cobalt."""
+    query = 'Chevrolet Cobalt white'
+    dish_names = ('cobalt', 'chevrolet', 'chevy')
+    all_keywords = dish_names + ('car', 'auto', 'sedan', 'white')
+    url = _try_duckduckgo_images(query, dish_names, all_keywords, (), strict=False)
+    if url:
+        return url
+    logger.warning('DuckDuckGo не дал результат для кобальта. Используем fallback.')
+    return 'https://upload.wikimedia.org/wikipedia/commons/2/2a/Chevrolet_Cobalt_Sedan_LT.jpg'
+
+
 # ---------------------------------------------------------------------------
 # Webhook
 # ---------------------------------------------------------------------------
@@ -467,6 +480,14 @@ def webhook(request):
     # --- самса ---------------------------------------------------------------
     if text in ('самса', 'somsa', 'сомса'):
         image_url = get_random_somsa_image()
+        result = _send_photo(chat_id, image_url)
+        if not result or not result.get('ok'):
+            _send_message(chat_id, 'Не удалось загрузить фото, попробуй ещё раз 🍽️')
+        return JsonResponse({'ok': True})
+
+    # --- кобальт -------------------------------------------------------------
+    if text in ('кобальт', 'cobalt'):
+        image_url = get_cobalt_image()
         result = _send_photo(chat_id, image_url)
         if not result or not result.get('ok'):
             _send_message(chat_id, 'Не удалось загрузить фото, попробуй ещё раз 🍽️')
