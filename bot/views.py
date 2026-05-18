@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import random
+from io import BytesIO
 from typing import Optional, Tuple
 import requests
 from django.http import JsonResponse
@@ -428,14 +429,43 @@ def get_cobalt_image() -> str:
     return 'https://upload.wikimedia.org/wikipedia/commons/9/9a/Chevrolet_Cobalt_sedan_--_03-16-2012.JPG'
 
 
-def _send_photo_with_retry(chat_id: int, image_func, max_retries: int = 5) -> None:
+def _send_photo_from_url(chat_id: int, photo_url: str) -> dict:
+    """
+    Скачать фото по URL и отправить в Telegram напрямую (multipart/form-data).
+    Обходит rate-limit хостингов (например, Wikimedia), потому что Telegram
+    не ходит за файлом сам — получает его от бота.
+    """
+    try:
+        img_resp = requests.get(photo_url, timeout=10, headers={'User-Agent': 'PlovBot/1.0'})
+        img_resp.raise_for_status()
+
+        filename = photo_url.split('/')[-1].split('?')[0] or 'image.jpg'
+        if not filename.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+            filename = 'image.jpg'
+
+        url = f'{TELEGRAM_API_URL}/sendPhoto'
+        files = {'photo': (filename, BytesIO(img_resp.content))}
+        data = {'chat_id': chat_id}
+        response = requests.post(url, data=data, files=files, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as exc:
+        logger.error('Ошибка при скачивании/отправке фото: %s', exc)
+        return {}
+
+
+def _send_photo_with_retry(chat_id: int, image_func, max_retries: int = 5, direct: bool = False) -> None:
     """
     Отправить фото в чат с повторными попытками.
     При неудаче запрашивает новый URL и пробует снова.
+    direct=True — скачивать файл и отправлять через multipart (обходит rate-limit хостинга).
     """
     for attempt in range(1, max_retries + 1):
         image_url = image_func()
-        result = _send_photo(chat_id, image_url)
+        if direct:
+            result = _send_photo_from_url(chat_id, image_url)
+        else:
+            result = _send_photo(chat_id, image_url)
         if result and result.get('ok'):
             return
         logger.warning(
@@ -498,7 +528,7 @@ def webhook(request):
 
     # --- кобальт -------------------------------------------------------------
     if text in ('кобальт', 'cobalt'):
-        _send_photo_with_retry(chat_id, get_cobalt_image)
+        _send_photo_with_retry(chat_id, get_cobalt_image, direct=True)
         return JsonResponse({'ok': True})
 
     # --- всё остальное — молчим, чтобы не засорять чат -----------------------
