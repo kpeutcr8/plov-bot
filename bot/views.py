@@ -425,6 +425,23 @@ def get_cobalt_image() -> str:
     return 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/Chevrolet_Cobalt_sedan_--_03-16-2012.JPG/960px-Chevrolet_Cobalt_sedan_--_03-16-2012.JPG'
 
 
+def _send_photo_with_retry(chat_id: int, image_func, max_retries: int = 5) -> None:
+    """
+    Отправить фото в чат с повторными попытками.
+    При неудаче запрашивает новый URL и пробует снова.
+    """
+    for attempt in range(1, max_retries + 1):
+        image_url = image_func()
+        result = _send_photo(chat_id, image_url)
+        if result and result.get('ok'):
+            return
+        logger.warning(
+            'Не удалось отправить фото (попытка %d/%d), пробуем заново...',
+            attempt, max_retries,
+        )
+    _send_message(chat_id, 'Не удалось загрузить фото, попробуй ещё раз 🍽️')
+
+
 # ---------------------------------------------------------------------------
 # Webhook
 # ---------------------------------------------------------------------------
@@ -468,26 +485,17 @@ def webhook(request):
 
     # --- плов ----------------------------------------------------------------
     if text == 'плов':
-        image_url = get_random_plov_image()
-        result = _send_photo(chat_id, image_url)
-        if not result or not result.get('ok'):
-            _send_message(chat_id, 'Не удалось загрузить фото, попробуй ещё раз 🍽️')
+        _send_photo_with_retry(chat_id, get_random_plov_image)
         return JsonResponse({'ok': True})
 
     # --- самса ---------------------------------------------------------------
     if text in ('самса', 'somsa', 'сомса'):
-        image_url = get_random_somsa_image()
-        result = _send_photo(chat_id, image_url)
-        if not result or not result.get('ok'):
-            _send_message(chat_id, 'Не удалось загрузить фото, попробуй ещё раз 🍽️')
+        _send_photo_with_retry(chat_id, get_random_somsa_image)
         return JsonResponse({'ok': True})
 
     # --- кобальт -------------------------------------------------------------
     if text in ('кобальт', 'cobalt'):
-        image_url = get_cobalt_image()
-        result = _send_photo(chat_id, image_url)
-        if not result or not result.get('ok'):
-            _send_message(chat_id, 'Не удалось загрузить фото, попробуй ещё раз 🍽️')
+        _send_photo_with_retry(chat_id, get_cobalt_image)
         return JsonResponse({'ok': True})
 
     # --- всё остальное — молчим, чтобы не засорять чат -----------------------
