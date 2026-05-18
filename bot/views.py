@@ -78,6 +78,26 @@ def _clean_wikimedia_url(url: str) -> str:
     return url
 
 
+def _is_valid_image_url(url: str) -> bool:
+    """Проверить, что URL отдаёт изображение по Content-Type."""
+    try:
+        resp = requests.head(url, timeout=5, allow_redirects=True)
+        if resp.status_code == 200:
+            content_type = resp.headers.get('Content-Type', '')
+            return content_type.startswith('image/')
+    except requests.RequestException:
+        pass
+
+    # Если HEAD не сработал (405 и т.д.), пробуем GET с stream=True
+    try:
+        resp = requests.get(url, stream=True, timeout=5)
+        content_type = resp.headers.get('Content-Type', '')
+        resp.close()
+        return content_type.startswith('image/')
+    except requests.RequestException:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Отправка сообщений
 # ---------------------------------------------------------------------------
@@ -266,11 +286,12 @@ def _try_pexels(
     return None
 
 
-def get_random_dish_image(config: dict) -> str:
+def get_random_dish_image(config: dict, max_attempts: int = 3) -> str:
     """
     Универсальная функция получения URL картинки блюда.
     config должен содержать: query, dish_names, related, fallback.
     Опционально: exclude.
+    Делает до max_attempts попыток через разные API.
     """
     dish_names = config['dish_names']
     all_keywords = dish_names + config['related']
@@ -279,19 +300,25 @@ def get_random_dish_image(config: dict) -> str:
 
     wiki_query = config.get('wiki_query', query)
 
-    url = _try_wikimedia(wiki_query, dish_names, all_keywords, exclude)
-    if url:
-        return url
+    for attempt in range(1, max_attempts + 1):
+        url = _try_wikimedia(wiki_query, dish_names, all_keywords, exclude)
+        if url and _is_valid_image_url(url):
+            logger.info('Валидная картинка найдена Wikimedia (попытка %d): %s', attempt, url)
+            return url
 
-    url = _try_pixabay(query, dish_names, all_keywords, exclude)
-    if url:
-        return url
+        url = _try_pixabay(query, dish_names, all_keywords, exclude)
+        if url and _is_valid_image_url(url):
+            logger.info('Валидная картинка найдена Pixabay (попытка %d): %s', attempt, url)
+            return url
 
-    url = _try_pexels(query, dish_names, all_keywords, exclude)
-    if url:
-        return url
+        url = _try_pexels(query, dish_names, all_keywords, exclude)
+        if url and _is_valid_image_url(url):
+            logger.info('Валидная картинка найдена Pexels (попытка %d): %s', attempt, url)
+            return url
 
-    logger.warning('Все API не дали результат. Используем fallback для %s.', query)
+        logger.info('Попытка %d не дала валидной картинки, пробуем ещё...', attempt)
+
+    logger.warning('Все %d попыток исчерпаны. Используем fallback для %s.', max_attempts, query)
     return config['fallback']
 
 
