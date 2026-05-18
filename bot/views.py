@@ -181,7 +181,7 @@ def _try_wikimedia(
         candidates = []
         for page in pages.values():
             title = page.get('title', '')
-            if not _is_dish_related(title, dish_names, all_keywords, exclude=exclude, strict=strict):
+            if not _is_dish_related(title, dish_names, all_keywords, exclude=exclude, strict=True):
                 continue
             imageinfo = page.get('imageinfo', [])
             if imageinfo:
