@@ -309,6 +309,42 @@ def _try_pexels(
     return None
 
 
+def _try_duckduckgo_images(
+    query: str,
+    dish_names: Tuple[str, ...],
+    all_keywords: Tuple[str, ...],
+    exclude: Tuple[str, ...] = (),
+) -> Optional[str]:
+    """
+    Поиск картинок через DuckDuckGo (библиотека duckduckgo-search).
+    Бесплатно, без API-ключей.
+    """
+    try:
+        from duckduckgo_search import DDGS
+
+        with DDGS() as ddgs:
+            results = ddgs.images(query, max_results=30)
+
+        candidates = []
+        for result in results:
+            title = result.get('title', '')
+            if not _is_dish_related(title, dish_names, all_keywords, exclude=exclude, strict=True):
+                continue
+            image_url = result.get('image')
+            if image_url:
+                candidates.append(image_url)
+
+        if candidates:
+            chosen = random.choice(candidates)
+            logger.info('DuckDuckGo Images выбрал URL: %s', chosen)
+            return chosen
+
+        logger.warning('DuckDuckGo Images не нашёл подходящих изображений после фильтрации.')
+    except Exception as exc:
+        logger.warning('DuckDuckGo Images ошибка: %s', exc)
+    return None
+
+
 def _try_source(func, *args):
     """Вспомогательная обёртка: получить URL и сразу провалидировать."""
     url = func(*args)
@@ -332,30 +368,36 @@ def get_random_dish_image(config: dict, max_attempts: int = 3) -> str:
     wiki_query = config.get('wiki_query', query)
 
     for attempt in range(1, max_attempts + 1):
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            futures = {
-                executor.submit(
-                    _try_source, _try_wikimedia, wiki_query, dish_names, all_keywords, exclude
-                ): 'Wikimedia',
-                executor.submit(
-                    _try_source, _try_pixabay, query, dish_names, all_keywords, exclude
-                ): 'Pixabay',
-                executor.submit(
-                    _try_source, _try_pexels, query, dish_names, all_keywords, exclude
-                ): 'Pexels',
-            }
-            for future in concurrent.futures.as_completed(futures):
-                source_name = futures[future]
-                try:
-                    url = future.result()
-                    if url:
-                        logger.info(
-                            'Валидная картинка найдена %s (попытка %d): %s',
-                            source_name, attempt, url,
-                        )
-                        return url
-                except Exception as exc:
-                    logger.warning('Ошибка при запросе к %s: %s', source_name, exc)
+        url = _try_source(_try_duckduckgo_images, query, dish_names, all_keywords, exclude)
+        if url:
+            logger.info('Валидная картинка найдена DuckDuckGo (попытка %d): %s', attempt, url)
+            return url
+
+        # Старые сервисы отключены из цепочки, но код функций сохранён:
+        # with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        #     futures = {
+        #         executor.submit(
+        #             _try_source, _try_wikimedia, wiki_query, dish_names, all_keywords, exclude
+        #         ): 'Wikimedia',
+        #         executor.submit(
+        #             _try_source, _try_pixabay, query, dish_names, all_keywords, exclude
+        #         ): 'Pixabay',
+        #         executor.submit(
+        #             _try_source, _try_pexels, query, dish_names, all_keywords, exclude
+        #         ): 'Pexels',
+        #     }
+        #     for future in concurrent.futures.as_completed(futures):
+        #         source_name = futures[future]
+        #         try:
+        #             url = future.result()
+        #             if url:
+        #                 logger.info(
+        #                     'Валидная картинка найдена %s (попытка %d): %s',
+        #                     source_name, attempt, url,
+        #                 )
+        #                 return url
+        #         except Exception as exc:
+        #             logger.warning('Ошибка при запросе к %s: %s', source_name, exc)
 
         logger.info('Попытка %d не дала валидной картинки, пробуем ещё...', attempt)
 
