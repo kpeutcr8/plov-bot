@@ -422,7 +422,7 @@ def get_cobalt_image() -> str:
     if url:
         return url
     logger.warning('Wikimedia не дал результат для кобальта. Используем fallback.')
-    return 'https://upload.wikimedia.org/wikipedia/commons/f/f1/Chevrolet-Cobalt-Coupe.JPG'
+    return 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/Chevrolet_Cobalt_sedan_--_03-16-2012.JPG/960px-Chevrolet_Cobalt_sedan_--_03-16-2012.JPG'
 
 
 # ---------------------------------------------------------------------------
