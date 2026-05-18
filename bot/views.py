@@ -160,6 +160,7 @@ def _try_wikimedia(
     dish_names: Tuple[str, ...],
     all_keywords: Tuple[str, ...],
     exclude: Tuple[str, ...] = (),
+    strict: bool = True,
 ) -> Optional[str]:
     """Wikimedia Commons Search API со случайным offset и фильтрацией."""
     offset = random.randint(1, 100)
@@ -181,7 +182,7 @@ def _try_wikimedia(
         candidates = []
         for page in pages.values():
             title = page.get('title', '')
-            if not _is_dish_related(title, dish_names, all_keywords, exclude=exclude, strict=True):
+            if not _is_dish_related(title, dish_names, all_keywords, exclude=exclude, strict=strict):
                 continue
             imageinfo = page.get('imageinfo', [])
             if imageinfo:
@@ -418,11 +419,11 @@ def get_cobalt_image() -> str:
     """Получить случайное фото Chevrolet Cobalt через Wikimedia."""
     dish_names = ('cobalt', 'chevrolet', 'chevy')
     all_keywords = dish_names + ('car', 'auto', 'sedan')
-    url = _try_wikimedia('Chevrolet Cobalt white', dish_names, all_keywords)
+    url = _try_wikimedia('Chevrolet Cobalt white', dish_names, all_keywords, strict=False)
     if url:
         return url
     logger.warning('Wikimedia не дал результат для кобальта. Используем fallback.')
-    return 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/Chevrolet_Cobalt_sedan_--_03-16-2012.JPG/960px-Chevrolet_Cobalt_sedan_--_03-16-2012.JPG'
+    return 'https://upload.wikimedia.org/wikipedia/commons/9/9a/Chevrolet_Cobalt_sedan_--_03-16-2012.JPG'
 
 
 def _send_photo_with_retry(chat_id: int, image_func, max_retries: int = 5) -> None:
