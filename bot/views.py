@@ -161,9 +161,11 @@ def _try_wikimedia(
     all_keywords: Tuple[str, ...],
     exclude: Tuple[str, ...] = (),
     strict: bool = True,
+    offset: Optional[int] = None,
 ) -> Optional[str]:
     """Wikimedia Commons Search API со случайным offset и фильтрацией."""
-    offset = random.randint(1, 100)
+    if offset is None:
+        offset = random.randint(1, 100)
     wiki_api = (
         'https://commons.wikimedia.org/w/api.php'
         f'?action=query&generator=search&gsrsearch={requests.utils.quote(query)}'
@@ -419,7 +421,7 @@ def get_cobalt_image() -> str:
     """Получить случайное фото Chevrolet Cobalt через Wikimedia."""
     dish_names = ('cobalt', 'chevrolet', 'chevy')
     all_keywords = dish_names + ('car', 'auto', 'sedan')
-    url = _try_wikimedia('Chevrolet Cobalt white', dish_names, all_keywords, strict=False)
+    url = _try_wikimedia('Chevrolet Cobalt white', dish_names, all_keywords, strict=False, offset=0)
     if url:
         return url
     logger.warning('Wikimedia не дал результат для кобальта. Используем fallback.')
